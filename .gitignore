@@ -1,0 +1,4 @@
+build_plugin/
+build/
+build_deps/
+.DS_Store
