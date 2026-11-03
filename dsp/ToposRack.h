@@ -133,7 +133,11 @@ struct RackState
     float inputDb    = 0.0f;
     float outputDb   = 0.0f;
     float dryWet     = 1.0f;
-
+    // Auto gain: compensates slot drive on the wet path (1/drive) and scales the
+    // parallel-lane sum by 1/(active lanes) so routing changes don't jump level.
+    // Off by default to keep the offline CLI renders identical; the plugin
+    // exposes it as a parameter (default on).
+    bool  autoGain   = false;
 };
 
 //============================================================================
@@ -185,6 +189,7 @@ public:
         for (int s = 0; s < kNumSlots; ++s)
             for (auto& e : slotEngines[s]) e->reset();
         for (int c = 0; c < 2; ++c) { hb1[c].reset(); hb2[c].reset(); }
+        laneNormPrev = -1.0f;   // snap (no ramp) on the next block
     }
 
     /** Re-prepare engines when the effective (oversampled) rate changes. Called
@@ -305,6 +310,15 @@ private:
                 }
         }
 
+        int numActive = 0;
+        for (int l = 0; l < kNumLanes; ++l)
+            if (! state.laneMute[l] && active[l]) ++numActive;
+
+        // level-matched parallel sum, ramped across the block to avoid clicks
+        const float normTarget = (state.autoGain && numActive > 1) ? 1.0f / (float) numActive : 1.0f;
+        const float normStart  = (laneNormPrev < 0.0f) ? normTarget : laneNormPrev;
+        laneNormPrev = normTarget;
+
         float accL, accR;
         bool anyLane = false;
         for (int l = 0; l < kNumLanes; ++l)
@@ -330,6 +344,11 @@ private:
                 accR += laneBuf[l][1][(size_t) i] * g;
             }
             if (! anyLane) { accL = L[i]; accR = R[i]; }   // nothing routed: pass through
+            else
+            {
+                const float norm = normStart + (normTarget - normStart) * (float) (i + 1) / (float) n;
+                accL *= norm; accR *= norm;
+            }
             L[i] = accL; R[i] = accR;
         }
     }
@@ -354,10 +373,14 @@ private:
         eng->process (tL, tR, n);
 
         const float mix = clampf (st.mix, 0.0f, 1.0f);
-        const float lv  = dbToGain (st.levelDb);
+        // auto gain: undo the drive on the wet path so Drive changes character,
+        // not loudness, and the Mix knob blends two level-matched signals
+        const float lv  = dbToGain (st.levelDb) * (state.autoGain ? 1.0f / dg : 1.0f);
         const float pan = clampf (st.pan, -1.0f, 1.0f);
-        const float gl  = lv * std::cos ((pan + 1.0f) * 0.25f * kPi) * 1.41421356f * 0.70710678f;
-        const float gr  = lv * std::sin ((pan + 1.0f) * 0.25f * kPi) * 1.41421356f * 0.70710678f;
+        // stereo balance law: unity on both sides at centre, the far side fades
+        // out as the slot is panned (the old sin/cos law cost 3 dB at centre)
+        const float gl  = lv * (pan > 0.0f ? 1.0f - pan : 1.0f);
+        const float gr  = lv * (pan < 0.0f ? 1.0f + pan : 1.0f);
 
         for (int i = 0; i < n; ++i)
         {
@@ -369,6 +392,7 @@ private:
     }
 
     RackState state;
+    float laneNormPrev = -1.0f;
     std::vector<std::unique_ptr<FilterEngine>> slotEngines[kNumSlots];
     Halfband hb1[2], hb2[2];
     std::vector<float> osBuf[2], os2Buf[2], dryBuf[2];

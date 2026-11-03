@@ -1,5 +1,37 @@
 # TOPOS — Modular Filter Matrix · plugin build report
 
+## 2026-11-02 — knob mapping + gain staging fixes (macOS, JUCE 8.0.6)
+
+| issue | fix |
+|---|---|
+| Skewed knobs (Hz/ms/s/drive) mapped backwards: `norm^skew` crammed 20 Hz–9 kHz into the bottom 10 % of a cutoff knob; noon = 14.6 kHz | `denormalise` uses the JUCE convention `norm^(1/skew)` (noon ≈ 1.8 kHz); `normalise` inverted to match |
+| Every engine knob started at 0.5 regardless of the engine's `ParamSpec::def` (ROUTE resonance 30 instead of 3, THERMAL drive 15× instead of 1×, …); switching engines kept stale positions | the processor loads the engine's defaults into `slotN_p0..p7` whenever a slot's engine changes (UI, automation, preset). Until that message-thread update lands, the audio thread uses the defaults directly. Session restore is left untouched |
+| Host showed proxies as `Slot 1 P1 = 0.50` | proxy parameters format/parse through the current engine's `ParamSpec` (`800.0 Hz`) |
+| Engine defaults displayed as 799.9 Hz / 2.999 | proxies are continuous (the 0.0001 step quantised the skewed round trip) |
+| dB sliders showed `-0.00` | explicit dB formatter |
+| Centre pan cost 3 dB on every slot's wet signal | stereo balance law in `runSlot`: unity at centre |
+| Drive had no make-up; Mix blended driven wet with undriven dry | new `auto_gain` parameter (default **on**): wet path × 1/drive |
+| N active parallel lanes summed to +6 / +9.5 dB | `auto_gain` also scales the lane sum by 1/N (ramped per block) |
+
+`RackState::autoGain` defaults to `false` in the core, so `tests/topos_cli` renders are
+unchanged; the plugin turns it on from its parameter. Saved sessions from before this fix
+reopen with different values on skewed engine knobs (mapping changed).
+
+Verification: `tests/plugin_smoke/fixes.cpp` (`fixcheck`, 17 checks) all pass; `smoke` and
+`topos_cli --selftest` pass; `auval -v aufx Tpos Rdka` passes; **pluginval
+`--strictness-level 10` passes on both VST3 and AU, including GUI tests**.
+Editor screenshots in `docs/` regenerated.
+
+Build on macOS (the default JUCE path doesn't exist here):
+
+```bash
+cmake -S . -B build_plugin -DCMAKE_BUILD_TYPE=Release -DTOPOS_JUCE_PATH=/path/to/JUCE
+cmake --build build_plugin -j8
+```
+
+---
+
+
 Vendor: **Renky Denk Audio** · Product: **TOPOS** · Manufacturer code `Rdka` · Plugin code `Tpos`
 Date: 2026-08-27 · Host: Ubuntu (x86_64, 2 vCPU, 8 GB), g++ 15.2.0, CMake 4.2.3, Ninja 1.13.2
 
@@ -92,12 +124,9 @@ protected file was touched) instantiates `ToposAudioProcessor` directly:
    `preparedOsRate = 4`, while `RackState::oversample` defaults to 1. A wrapper therefore
    **must** call `setOversampleRate()` explicitly after `prepare()` or engine coefficients
    are computed for the wrong rate. The wrapper does this in `prepareToPlay`.
-2. Lane summing triplicates the signal when several lanes contain only pass-through
-   (`none`) slots: each non-empty lane copies the rack input, and empty-engine slots leave
-   it untouched, so three lanes at 0 dB sum to ≈ +9.5 dB (measured: 0.3 in → 0.9 out).
-   Not a bug per se — it is the documented parallel-lane behaviour — but it means the
-   factory default (all six slots on lane 1) is the safe one and users spreading empty
-   slots across lanes get gain.
+2. ~~Empty lanes sum to +9.5 dB~~ — **no longer true**: the core now leaves empty and
+   fully bypassed lanes out of the parallel sum. Active lanes still add up (see the
+   2026-11-02 Auto Gain fix below).
 3. `ToposRack::process()` silently clamps `n` to `maxBlockSize`; the wrapper chunks blocks
    itself so no samples are dropped when a host sends more than the prepared block size.
 4. `Halfband::push()` shifts a 31-tap state vector per sample (O(taps) per sample) and

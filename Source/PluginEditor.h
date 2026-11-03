@@ -90,6 +90,8 @@ private:
     juce::Slider inSlider, outSlider, dryWetSlider;
     juce::Label  inLabel, outLabel, dryWetLabel, osLabel;
     juce::ComboBox osBox;
+    juce::ToggleButton autoGainButton { "Auto Gain" };
+    std::unique_ptr<ButtonAtt> autoGainAtt;
 
     juce::Slider       laneSliders[topos::kNumLanes];
     juce::Label        laneLabels[topos::kNumLanes];

@@ -27,15 +27,7 @@ namespace
         s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 68, 16);
     }
 
-    juce::String formatSpecValue (const ParamSpec& spec, float value)
-    {
-        const int decimals = spec.stepped ? 0 : (std::abs (spec.max - spec.min) > 200.0f ? 1 : 3);
-        juce::String t (value, decimals);
-        const juce::String unit = juce::String::fromUTF8 (spec.unit);
-        if (unit.isNotEmpty())
-            t += " " + unit;
-        return t;
-    }
+    using P::formatSpecValue;
 }
 
 //============================================================================
@@ -295,6 +287,12 @@ ToposAudioProcessorEditor::ToposAudioProcessorEditor (ToposAudioProcessor& p)
     addAndMakeVisible (osBox);
     osAtt = std::make_unique<ComboBoxAtt> (proc.apvts, P::kOversample, osBox);
 
+    autoGainButton.setTooltip ("Auto Gain: removes slot Drive's level change from the wet "
+                               "signal and averages the active parallel lanes, so drive and "
+                               "routing change the tone, not the loudness.");
+    addAndMakeVisible (autoGainButton);
+    autoGainAtt = std::make_unique<ButtonAtt> (proc.apvts, P::kAutoGain, autoGainButton);
+
     for (int l = 0; l < kNumLanes; ++l)
     {
         styleLinear (laneSliders[l]);
@@ -354,7 +352,7 @@ void ToposAudioProcessorEditor::resized()
 
     // ---- global row -------------------------------------------------------
     auto globalRow = area.removeFromTop (28).reduced (10, 2);
-    const int gCell = juce::jmax (150, globalRow.getWidth() / 4);
+    const int gCell = juce::jmax (140, globalRow.getWidth() / 5);
 
     struct Pair { juce::Label* l; juce::Component* c; int labelW; };
     const Pair pairs[] =
@@ -373,10 +371,12 @@ void ToposAudioProcessorEditor::resized()
     }
 
     {
-        auto cell = globalRow.removeFromLeft (juce::jmin (gCell, globalRow.getWidth()));
+        auto cell = globalRow;   // last cell takes the remainder (oversample + auto gain)
         osLabel.setBounds (cell.removeFromLeft (70));
         cell.removeFromLeft (4);
         osBox.setBounds (cell.removeFromLeft (juce::jmin (80, cell.getWidth())).reduced (0, 2));
+        cell.removeFromLeft (8);
+        autoGainButton.setBounds (cell.removeFromLeft (juce::jmin (96, cell.getWidth())));
     }
 
     // ---- lane strip -------------------------------------------------------

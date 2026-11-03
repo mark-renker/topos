@@ -16,6 +16,9 @@ int main()
         if (auto* p = proc.apvts.getParameter (ids[i]))
             p->setValueNotifyingHost ((float) i / 5.0f);
 
+    // let the processor timer load each engine's default knob values
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (350);
+
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
     const int sizes[][2] = { { 1080, 800 }, { 760, 480 }, { 1600, 1000 } };
     juce::PNGImageFormat png;
@@ -24,7 +27,7 @@ int main()
         ed->setSize (sz[0], sz[1]);
         ed->resized();
         auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
-        juce::File out ("/home/user/workspace/plugin_smoke/editor_" + juce::String (sz[0]) + "x" + juce::String (sz[1]) + ".png");
+        juce::File out = juce::File::getCurrentWorkingDirectory().getChildFile ("editor_" + juce::String (sz[0]) + "x" + juce::String (sz[1]) + ".png");
         out.deleteFile();
         if (auto stream = std::unique_ptr<juce::FileOutputStream> (out.createOutputStream()))
             png.writeImageToStream (img, *stream);

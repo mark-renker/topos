@@ -13,7 +13,7 @@ juce::AudioProcessor::BusesProperties ToposAudioProcessor::defaultBuses()
 
 ToposAudioProcessor::ToposAudioProcessor()
     : juce::AudioProcessor (defaultBuses()),
-      apvts (*this, nullptr, "TOPOS", topos::params::createLayout())
+      apvts (*this, nullptr, "TOPOS", topos::params::createLayout (engineForSlot))
 {
     cacheParameterPointers();
     startTimer (100);      // watches the oversample choice (re-prepare is not RT safe)
@@ -32,6 +32,7 @@ void ToposAudioProcessor::cacheParameterPointers()
     pOutDb      = apvts.getRawParameterValue (kOutDb);
     pDryWet     = apvts.getRawParameterValue (kDryWet);
     pOversample = apvts.getRawParameterValue (kOversample);
+    pAutoGain   = apvts.getRawParameterValue (kAutoGain);
 
     for (int l = 0; l < kNumLanes; ++l)
     {
@@ -112,6 +113,7 @@ void ToposAudioProcessor::updateRackState()
     state.outputDb  = pOutDb->load();
     state.dryWet    = pDryWet->load();
     state.oversample = appliedOs.load();
+    state.autoGain  = pAutoGain->load() > 0.5f;
 
     for (int l = 0; l < kNumLanes; ++l)
     {
@@ -136,12 +138,19 @@ void ToposAudioProcessor::updateRackState()
         dst.levelDb  = src.levelDb->load();
         dst.pan      = src.pan->load();
 
-        // normalised proxies -> real engine values via the current descriptor
+        engineForSlot[n].store (engineIndex, std::memory_order_relaxed);
+
+        // normalised proxies -> real engine values via the current descriptor.
+        // Right after an engine change (before the message thread has reset the
+        // proxies) the old engine's knob positions are meaningless for the new
+        // engine, so use its defaults until syncEngineDefaults() catches up.
         const EngineDescriptor& desc = EngineRegistry::descriptor (engineIndex);
         const int np = juce::jlimit (0, kMaxEngineParams, desc.numParams);
+        const bool proxiesValid = proxiesForEngine[n].load (std::memory_order_acquire) == engineIndex;
 
         for (int p = 0; p < np; ++p)
-            dst.params[p] = topos::params::denormalise (desc.params[p], src.p[p]->load());
+            dst.params[p] = proxiesValid ? topos::params::denormalise (desc.params[p], src.p[p]->load())
+                                         : desc.params[p].def;
 
         for (int p = np; p < kMaxEngineParams; ++p)
             dst.params[p] = 0.0f;
@@ -211,10 +220,38 @@ void ToposAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 //============================================================================
 // message thread: oversample factor changes need a (non-RT-safe) re-prepare
 //============================================================================
+void ToposAudioProcessor::syncEngineDefaults()
+{
+    for (int n = 0; n < kNumSlots; ++n)
+    {
+        const int engineIndex = juce::jlimit (0, EngineRegistry::count() - 1,
+                                             (int) std::lround (slots[n].engine->load()));
+        if (proxiesForEngine[n].load (std::memory_order_acquire) == engineIndex)
+            continue;
+
+        // engine changed (UI, host automation or preset): load its defaults
+        const EngineDescriptor& desc = EngineRegistry::descriptor (engineIndex);
+        const int np = juce::jlimit (0, kMaxEngineParams, desc.numParams);
+        engineForSlot[n].store (engineIndex, std::memory_order_relaxed);
+
+        for (int p = 0; p < np; ++p)
+            if (auto* param = apvts.getParameter (topos::params::slotParamId (n, p)))
+            {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost (topos::params::normalise (desc.params[p], desc.params[p].def));
+                param->endChangeGesture();
+            }
+
+        proxiesForEngine[n].store (engineIndex, std::memory_order_release);
+    }
+}
+
 void ToposAudioProcessor::timerCallback()
 {
     if (pOversample == nullptr)
         return;
+
+    syncEngineDefaults();
 
     const int wanted = osFactorFromChoice ((int) pOversample->load());
 
@@ -243,7 +280,19 @@ void ToposAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
+        {
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
+
+            // restored knob values already belong to the restored engines:
+            // mark them valid so syncEngineDefaults() doesn't overwrite them
+            for (int n = 0; n < kNumSlots; ++n)
+            {
+                const int e = juce::jlimit (0, EngineRegistry::count() - 1,
+                                            (int) std::lround (slots[n].engine->load()));
+                engineForSlot[n].store (e, std::memory_order_relaxed);
+                proxiesForEngine[n].store (e, std::memory_order_release);
+            }
+        }
 }
 
 //============================================================================

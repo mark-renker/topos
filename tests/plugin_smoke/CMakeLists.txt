@@ -32,7 +32,18 @@ target_sources(guishot PRIVATE gui.cpp
   ${TOPOS_ROOT}/Source/PluginProcessor.cpp
   ${TOPOS_ROOT}/Source/PluginEditor.cpp)
 target_include_directories(guishot PRIVATE ${TOPOS_ROOT} ${TOPOS_ROOT}/Source)
-target_compile_definitions(guishot PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_STANDALONE_APPLICATION=1
+target_compile_definitions(guishot PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_STANDALONE_APPLICATION=1 JUCE_MODAL_LOOPS_PERMITTED=1
   JucePlugin_Name="TOPOS" JUCE_DISPLAY_SPLASH_SCREEN=0)
 target_link_libraries(guishot PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_dsp juce::juce_gui_basics
+  PUBLIC juce::juce_recommended_config_flags)
+
+# fixcheck - regression checks for the knob-mapping / gain-staging fixes
+juce_add_console_app(fixcheck PRODUCT_NAME fixcheck)
+target_sources(fixcheck PRIVATE fixes.cpp
+  ${TOPOS_ROOT}/Source/PluginProcessor.cpp
+  ${TOPOS_ROOT}/Source/PluginEditor.cpp)
+target_include_directories(fixcheck PRIVATE ${TOPOS_ROOT} ${TOPOS_ROOT}/Source)
+target_compile_definitions(fixcheck PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_STANDALONE_APPLICATION=1 JUCE_MODAL_LOOPS_PERMITTED=1
+  JucePlugin_Name="TOPOS" JUCE_DISPLAY_SPLASH_SCREEN=0)
+target_link_libraries(fixcheck PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_dsp juce::juce_gui_basics
   PUBLIC juce::juce_recommended_config_flags)

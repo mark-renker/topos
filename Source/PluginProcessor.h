@@ -46,9 +46,20 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+private:
+    // Declared before apvts: the layout's display lambdas capture engineForSlot.
+    // engineForSlot   — current engine per slot (any thread may read)
+    // proxiesForEngine — engine the slot's p0..p7 values currently belong to;
+    //                    while it differs from the selected engine the audio
+    //                    thread uses the engine's ParamSpec defaults instead
+    std::atomic<int> engineForSlot[topos::kNumSlots] {};
+    std::atomic<int> proxiesForEngine[topos::kNumSlots] {};
+
+public:
     juce::AudioProcessorValueTreeState apvts;
 
 private:
+    void syncEngineDefaults();               // message thread
     static BusesProperties defaultBuses();
 
     //==== parameter pointer cache (no lookups in processBlock) ==============
@@ -79,6 +90,7 @@ private:
     std::atomic<float>* pOutDb      = nullptr;
     std::atomic<float>* pDryWet     = nullptr;
     std::atomic<float>* pOversample = nullptr;
+    std::atomic<float>* pAutoGain   = nullptr;
     std::atomic<float>* pLaneLevel[topos::kNumLanes] {};
     std::atomic<float>* pLaneMute[topos::kNumLanes] {};
 
